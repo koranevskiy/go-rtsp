@@ -2,14 +2,19 @@ package main
 
 import (
 	"fmt"
+	"image"
+	"image/jpeg"
 	"log"
 	"os"
+	"strconv"
+	"time"
 
 	"github.com/bluenviron/gortsplib/v4"
 	"github.com/bluenviron/gortsplib/v4/pkg/description"
 	"github.com/bluenviron/gortsplib/v4/pkg/format"
 	"github.com/bluenviron/gortsplib/v4/pkg/format/rtph265"
 	"github.com/bluenviron/gortsplib/v4/pkg/url"
+	"github.com/bluenviron/mediacommon/pkg/codecs/h265"
 	"github.com/pion/rtp"
 )
 
@@ -74,8 +79,11 @@ func main() {
 		fmt.Println("Can not create decoder")
 		panic(err)
 	}
+
+	saveCount := 0
+	iframeReceived := false
 	client.OnPacketRTP(mediaStream, format, func(packet *rtp.Packet) {
-		onPacketRecieved(packet, client, mediaStream, rtpDecoder, frameDec)
+		onPacketRecieved(packet, client, mediaStream, rtpDecoder, frameDec, saveCount, iframeReceived)
 	})
 	client.Play(nil)
 	client.Wait()
@@ -83,13 +91,13 @@ func main() {
 }
 
 // 2
-func onPacketRecieved(packet *rtp.Packet, client gortsplib.Client, mediaStream *description.Media, rtpDecoder *rtph265.Decoder, frameDec *h265Decoder) {
-	decodePacket(packet, client, mediaStream, rtpDecoder, frameDec)
+func onPacketRecieved(packet *rtp.Packet, client gortsplib.Client, mediaStream *description.Media, rtpDecoder *rtph265.Decoder, frameDec *h265Decoder, s int, f bool) {
+	decodePacket(packet, client, mediaStream, rtpDecoder, frameDec, s, f)
 	// fmt.Println(packet)
 }
 
 // 3 декодинг
-func decodePacket(packet *rtp.Packet, client gortsplib.Client, mediaStream *description.Media, rtpDecoder *rtph265.Decoder, frameDec *h265Decoder) {
+func decodePacket(packet *rtp.Packet, client gortsplib.Client, mediaStream *description.Media, rtpDecoder *rtph265.Decoder, frameDec *h265Decoder, saveCount int, iframeReceived bool) {
 	pts, ok := client.PacketPTS(mediaStream, packet) // вернет еще timestamp pts
 	// во тут вопросы есть
 	if !ok {
@@ -105,6 +113,16 @@ func decodePacket(packet *rtp.Packet, client gortsplib.Client, mediaStream *desc
 		}
 		return
 	}
+
+	// wait for an I-frame
+	if !iframeReceived {
+		if !h265.IsRandomAccess(accessU) {
+			log.Printf("waiting for an I-frame")
+			return
+		}
+		iframeReceived = true
+	}
+
 	for _, nalu := range accessU {
 		// convert NALUs into RGBA frames
 		img, err := frameDec.decode(nalu)
@@ -117,7 +135,34 @@ func decodePacket(packet *rtp.Packet, client gortsplib.Client, mediaStream *desc
 			continue
 		}
 
+		err = saveToFile(img)
+		if err != nil {
+			panic(err)
+		}
+
 		log.Printf("decoded frame with PTS %v and size %v", pts, img.Bounds().Max)
+		saveCount++
+		if saveCount == 15 {
+			log.Printf("saved 15 images, exiting")
+			os.Exit(1)
+		}
 	}
 
+}
+
+func saveToFile(img image.Image) error {
+	// create file
+	fname := strconv.FormatInt(time.Now().UnixNano()/int64(time.Millisecond), 10) + ".jpg"
+	f, err := os.Create(fname)
+	if err != nil {
+		panic(err)
+	}
+	defer f.Close()
+
+	log.Println("saving", fname)
+
+	// convert to jpeg
+	return jpeg.Encode(f, img, &jpeg.Options{
+		Quality: 60,
+	})
 }
