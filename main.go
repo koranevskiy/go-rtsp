@@ -14,11 +14,10 @@ import (
 	"github.com/bluenviron/gortsplib/v4/pkg/format"
 	"github.com/bluenviron/gortsplib/v4/pkg/format/rtph265"
 	"github.com/bluenviron/gortsplib/v4/pkg/url"
-	"github.com/bluenviron/mediacommon/pkg/codecs/h265"
 	"github.com/pion/rtp"
 )
 
-const conStr = "rtsp://video:qG4RXkJ3d63t@10.10.17.29:554/cam/realmonitor?channel=1&subtype=1&unicast=true&proto=Onvif"
+const conStr = "rtsp://video:qG4RXkJ3d63t@10.10.17.29:554/cam/realmonitor?channel=1&subtype=0&unicast=true&proto=Onvif"
 
 // 1 подключиться к rtsp и получать пакеты
 // 2 функция при получении пакета
@@ -33,7 +32,6 @@ func main() {
 	client := gortsplib.Client{}
 	defer client.Close()
 	cUrl, _ := url.Parse(conStr)
-	fmt.Println(cUrl.Host, cUrl.Scheme)
 	// setup client fields
 	err := client.Start(cUrl.Scheme, cUrl.Host)
 	if err != nil {
@@ -98,7 +96,7 @@ func onPacketRecieved(packet *rtp.Packet, client gortsplib.Client, mediaStream *
 
 // 3 декодинг
 func decodePacket(packet *rtp.Packet, client gortsplib.Client, mediaStream *description.Media, rtpDecoder *rtph265.Decoder, frameDec *h265Decoder, saveCount int, iframeReceived bool) {
-	pts, ok := client.PacketPTS(mediaStream, packet) // вернет еще timestamp pts
+	_, ok := client.PacketPTS(mediaStream, packet) // вернет еще timestamp pts
 	// во тут вопросы есть
 	if !ok {
 		log.Printf("await for timestamp")
@@ -114,14 +112,13 @@ func decodePacket(packet *rtp.Packet, client gortsplib.Client, mediaStream *desc
 		return
 	}
 
-	// wait for an I-frame
-	if !iframeReceived {
-		if !h265.IsRandomAccess(accessU) {
-			log.Printf("waiting for an I-frame")
-			return
-		}
-		iframeReceived = true
-	}
+	// // wait for an I-frame
+	// if !iframeReceived {
+	// 	if !h265.IsRandomAccess(accessU) {
+	// 		return
+	// 	}
+	// 	iframeReceived = true
+	// }
 
 	for _, nalu := range accessU {
 		// convert NALUs into RGBA frames
@@ -140,12 +137,6 @@ func decodePacket(packet *rtp.Packet, client gortsplib.Client, mediaStream *desc
 			panic(err)
 		}
 
-		log.Printf("decoded frame with PTS %v and size %v", pts, img.Bounds().Max)
-		saveCount++
-		if saveCount == 15 {
-			log.Printf("saved 15 images, exiting")
-			os.Exit(1)
-		}
 	}
 
 }
@@ -158,8 +149,6 @@ func saveToFile(img image.Image) error {
 		panic(err)
 	}
 	defer f.Close()
-
-	log.Println("saving", fname)
 
 	// convert to jpeg
 	return jpeg.Encode(f, img, &jpeg.Options{
