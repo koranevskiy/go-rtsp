@@ -6,6 +6,7 @@ import (
 	"image/jpeg"
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -24,10 +25,11 @@ const conStr = "rtsp://video:qG4RXkJ3d63t@10.10.17.29:554/cam/realmonitor?channe
 // 3 функция декодирования пакета
 // 4 запись декодированного пакета в файл
 
-var file, _ = os.Create("file.h265")
+func init() {
+	os.MkdirAll("images", os.ModePerm)
+}
 
 func main() {
-	defer file.Close()
 	// 1
 	client := gortsplib.Client{}
 	defer client.Close()
@@ -79,9 +81,8 @@ func main() {
 	}
 
 	saveCount := 0
-	iframeReceived := false
 	client.OnPacketRTP(mediaStream, format, func(packet *rtp.Packet) {
-		onPacketRecieved(packet, client, mediaStream, rtpDecoder, frameDec, saveCount, iframeReceived)
+		onPacketRecieved(packet, client, mediaStream, rtpDecoder, frameDec, saveCount)
 	})
 	client.Play(nil)
 	client.Wait()
@@ -89,13 +90,13 @@ func main() {
 }
 
 // 2
-func onPacketRecieved(packet *rtp.Packet, client gortsplib.Client, mediaStream *description.Media, rtpDecoder *rtph265.Decoder, frameDec *h265Decoder, s int, f bool) {
-	decodePacket(packet, client, mediaStream, rtpDecoder, frameDec, s, f)
+func onPacketRecieved(packet *rtp.Packet, client gortsplib.Client, mediaStream *description.Media, rtpDecoder *rtph265.Decoder, frameDec *h265Decoder, s int) {
+	decodePacket(packet, client, mediaStream, rtpDecoder, frameDec, s)
 	// fmt.Println(packet)
 }
 
 // 3 декодинг
-func decodePacket(packet *rtp.Packet, client gortsplib.Client, mediaStream *description.Media, rtpDecoder *rtph265.Decoder, frameDec *h265Decoder, saveCount int, iframeReceived bool) {
+func decodePacket(packet *rtp.Packet, client gortsplib.Client, mediaStream *description.Media, rtpDecoder *rtph265.Decoder, frameDec *h265Decoder, saveCount int) {
 	_, ok := client.PacketPTS(mediaStream, packet) // вернет еще timestamp pts
 	// во тут вопросы есть
 	if !ok {
@@ -112,14 +113,6 @@ func decodePacket(packet *rtp.Packet, client gortsplib.Client, mediaStream *desc
 		return
 	}
 
-	// // wait for an I-frame
-	// if !iframeReceived {
-	// 	if !h265.IsRandomAccess(accessU) {
-	// 		return
-	// 	}
-	// 	iframeReceived = true
-	// }
-
 	for _, nalu := range accessU {
 		// convert NALUs into RGBA frames
 		img, err := frameDec.decode(nalu)
@@ -131,12 +124,7 @@ func decodePacket(packet *rtp.Packet, client gortsplib.Client, mediaStream *desc
 		if img == nil {
 			continue
 		}
-
-		err = saveToFile(img)
-		if err != nil {
-			panic(err)
-		}
-
+		saveToFile(img)
 	}
 
 }
@@ -144,7 +132,7 @@ func decodePacket(packet *rtp.Packet, client gortsplib.Client, mediaStream *desc
 func saveToFile(img image.Image) error {
 	// create file
 	fname := strconv.FormatInt(time.Now().UnixNano()/int64(time.Millisecond), 10) + ".jpg"
-	f, err := os.Create(fname)
+	f, err := os.Create(filepath.Join("images", fname))
 	if err != nil {
 		panic(err)
 	}
