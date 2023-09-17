@@ -6,12 +6,14 @@ import (
 	"unsafe"
 )
 
-// #cgo pkg-config: libavcodec libavutil libswscale
+// #cgo pkg-config: libavcodec libavutil libswscale libavformat
 // #include <libavcodec/avcodec.h>
 // #include <libavutil/imgutils.h>
 // #include <libswscale/swscale.h>
+// #include <libavformat/avformat.h>
 import "C"
 
+// для jpeg
 func frameData(frame *C.AVFrame) **C.uint8_t {
 	return (**C.uint8_t)(unsafe.Pointer(&frame.data[0]))
 }

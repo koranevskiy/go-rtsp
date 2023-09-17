@@ -60,16 +60,24 @@ func main() {
 		panic(err)
 	}
 	defer frameDec.close()
+	//asd 12
 
-	// if VPS, SPS and PPS are present into the SDP, send them to the decoder
+	muxer := NewH265RTPVideo()
+	defer muxer.Close()
+
+	return
+
 	if format.VPS != nil {
 		frameDec.decode(format.VPS)
+		muxer.WriteNalu(format.VPS)
 	}
 	if format.SPS != nil {
 		frameDec.decode(format.SPS)
+		muxer.WriteNalu(format.SPS)
 	}
 	if format.PPS != nil {
 		frameDec.decode(format.PPS)
+		muxer.WriteNalu(format.PPS)
 	}
 
 	// Setup request with ports - setup connection
@@ -82,7 +90,7 @@ func main() {
 
 	saveCount := 0
 	client.OnPacketRTP(mediaStream, format, func(packet *rtp.Packet) {
-		onPacketRecieved(packet, client, mediaStream, rtpDecoder, frameDec, saveCount)
+		onPacketRecieved(packet, client, mediaStream, rtpDecoder, frameDec, saveCount, muxer)
 	})
 	client.Play(nil)
 	client.Wait()
@@ -90,13 +98,26 @@ func main() {
 }
 
 // 2
-func onPacketRecieved(packet *rtp.Packet, client gortsplib.Client, mediaStream *description.Media, rtpDecoder *rtph265.Decoder, frameDec *h265Decoder, s int) {
-	decodePacket(packet, client, mediaStream, rtpDecoder, frameDec, s)
+func onPacketRecieved(
+	packet *rtp.Packet,
+	client gortsplib.Client,
+	mediaStream *description.Media,
+	rtpDecoder *rtph265.Decoder,
+	frameDec *h265Decoder, s int,
+	muxer *h265RTPVideoWriter) {
+	decodePacket(packet, client, mediaStream, rtpDecoder, frameDec, s, muxer)
 	// fmt.Println(packet)
 }
 
 // 3 декодинг
-func decodePacket(packet *rtp.Packet, client gortsplib.Client, mediaStream *description.Media, rtpDecoder *rtph265.Decoder, frameDec *h265Decoder, saveCount int) {
+func decodePacket(
+	packet *rtp.Packet,
+	client gortsplib.Client,
+	mediaStream *description.Media,
+	rtpDecoder *rtph265.Decoder,
+	frameDec *h265Decoder,
+	saveCount int,
+	muxer *h265RTPVideoWriter) {
 	_, ok := client.PacketPTS(mediaStream, packet) // вернет еще timestamp pts
 	// во тут вопросы есть
 	if !ok {
@@ -115,6 +136,7 @@ func decodePacket(packet *rtp.Packet, client gortsplib.Client, mediaStream *desc
 
 	for _, nalu := range accessU {
 		// convert NALUs into RGBA frames
+		muxer.WriteNalu(nalu)
 		img, err := frameDec.decode(nalu)
 		if err != nil {
 			panic(err)
