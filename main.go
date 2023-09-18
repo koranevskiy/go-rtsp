@@ -65,8 +65,6 @@ func main() {
 	muxer := NewH265RTPVideo()
 	defer muxer.Close()
 
-	return
-
 	if format.VPS != nil {
 		frameDec.decode(format.VPS)
 		muxer.WriteNalu(format.VPS)
