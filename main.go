@@ -2,13 +2,8 @@ package main
 
 import (
 	"fmt"
-	"image"
-	"image/jpeg"
 	"log"
 	"os"
-	"path/filepath"
-	"strconv"
-	"time"
 
 	"github.com/bluenviron/gortsplib/v4"
 	"github.com/bluenviron/gortsplib/v4/pkg/description"
@@ -46,9 +41,11 @@ func main() {
 		fmt.Println("Can not describe session")
 		panic(err)
 	}
+	fmt.Println(aboutSession)
 	var format *format.H265
 	// if success initializes format
 	mediaStream := aboutSession.FindFormat(&format)
+
 	if mediaStream == nil {
 		fmt.Println("There is no such media with h265 format")
 		return
@@ -67,15 +64,15 @@ func main() {
 
 	if format.VPS != nil {
 		frameDec.decode(format.VPS)
-		muxer.WriteNalu(format.VPS)
+		// muxer.WriteNalu(format.VPS, 0.0)
 	}
 	if format.SPS != nil {
 		frameDec.decode(format.SPS)
-		muxer.WriteNalu(format.SPS)
+		// muxer.WriteNalu(format.SPS, 0.0)
 	}
 	if format.PPS != nil {
 		frameDec.decode(format.PPS)
-		muxer.WriteNalu(format.PPS)
+		// muxer.WriteNalu(format.PPS, 0.0)
 	}
 
 	// Setup request with ports - setup connection
@@ -85,6 +82,8 @@ func main() {
 		fmt.Println("Can not create decoder")
 		panic(err)
 	}
+	fmt.Println(aboutSession)
+	fmt.Println(mediaStream)
 
 	saveCount := 0
 	client.OnPacketRTP(mediaStream, format, func(packet *rtp.Packet) {
@@ -103,6 +102,8 @@ func onPacketRecieved(
 	rtpDecoder *rtph265.Decoder,
 	frameDec *h265Decoder, s int,
 	muxer *h265RTPVideoWriter) {
+	fmt.Println(packet)
+	fmt.Println(packet.Header)
 	decodePacket(packet, client, mediaStream, rtpDecoder, frameDec, s, muxer)
 	// fmt.Println(packet)
 }
@@ -116,7 +117,10 @@ func decodePacket(
 	frameDec *h265Decoder,
 	saveCount int,
 	muxer *h265RTPVideoWriter) {
-	_, ok := client.PacketPTS(mediaStream, packet) // вернет еще timestamp pts
+
+	muxer.ProcessRtpPacketPayload(packet)
+
+	pts, ok := client.PacketPTS(mediaStream, packet) // вернет еще timestamp pts
 	// во тут вопросы есть
 	if !ok {
 		log.Printf("await for timestamp")
@@ -134,32 +138,32 @@ func decodePacket(
 
 	for _, nalu := range accessU {
 		// convert NALUs into RGBA frames
-		muxer.WriteNalu(nalu)
-		img, err := frameDec.decode(nalu)
-		if err != nil {
-			panic(err)
-		}
+		muxer.WriteNalu(nalu, pts.Seconds())
+		// img, err := frameDec.decode(nalu)
+		// if err != nil {
+		// 	panic(err)
+		// }
 
-		// wait for a frame
-		if img == nil {
-			continue
-		}
-		saveToFile(img)
+		// // wait for a frame
+		// if img == nil {
+		// 	continue
+		// }
+		// saveToFile(img)
 	}
 
 }
 
-func saveToFile(img image.Image) error {
-	// create file
-	fname := strconv.FormatInt(time.Now().UnixNano()/int64(time.Millisecond), 10) + ".jpg"
-	f, err := os.Create(filepath.Join("images", fname))
-	if err != nil {
-		panic(err)
-	}
-	defer f.Close()
+// func saveToFile(img image.Image) error {
+// 	// create file
+// 	fname := strconv.FormatInt(time.Now().UnixNano()/int64(time.Millisecond), 10) + ".jpg"
+// 	f, err := os.Create(filepath.Join("images", fname))
+// 	if err != nil {
+// 		panic(err)
+// 	}
+// 	defer f.Close()
 
-	// convert to jpeg
-	return jpeg.Encode(f, img, &jpeg.Options{
-		Quality: 60,
-	})
-}
+// 	// convert to jpeg
+// 	return jpeg.Encode(f, img, &jpeg.Options{
+// 		Quality: 60,
+// 	})
+// }

@@ -1,10 +1,12 @@
 package main
 
 import (
-	"fmt"
+	"os"
 	"strconv"
 	"time"
 	"unsafe"
+
+	"github.com/pion/rtp"
 )
 
 //1 Создать контекст (контейнер файл mp4)
@@ -32,21 +34,17 @@ type h265RTPVideoWriter struct {
 	dstFrame              *C.AVFrame
 	dstFramePtr           []uint8
 	enCodecCtx            *C.AVCodecContext
+	packet_nb             int
+	now                   int64
 }
 
 func NewH265RTPVideo() *h265RTPVideoWriter {
 	file_name := (C.CString)(strconv.FormatInt(time.Now().UnixMilli(), 10) + ".mp4")
 	var output_format_context *C.AVFormatContext
-	// output_format := C.av_guess_format(nil, file_name, nil)
-	// if output_format == nil {
-	// 	panic("av_guess_format")
-	// }
-	// output_format.video_codec = C.AV_CODEC_ID_H265
 
 	if C.avformat_alloc_output_context2(&output_format_context, nil, nil, file_name) < 0 {
 		panic("avformat_alloc_output_context2")
 	}
-	// output_format_context.oformat = output_format
 
 	encoder := C.avcodec_find_encoder(C.AV_CODEC_ID_H265)
 	if encoder == nil {
@@ -58,13 +56,17 @@ func NewH265RTPVideo() *h265RTPVideoWriter {
 		panic("avcodec_alloc_context3")
 	}
 
-	encoderCtx.time_base = C.AVRational{num: 1, den: 25}
+	encoderCtx.time_base = C.AVRational{num: 1, den: 90000}
 	encoderCtx.pix_fmt = C.AV_PIX_FMT_YUV420P
-	encoderCtx.width = 1920
-	encoderCtx.height = 1080
+	encoderCtx.width = 3840
+	encoderCtx.height = 2160
 	encoderCtx.framerate = C.AVRational{num: 25, den: 1}
 	encoderCtx.codec_type = C.AVMEDIA_TYPE_VIDEO
-
+	// timebase, timescale, fps
+	/*
+		pts_time = pts * time_base
+		frame=0, pts=0, pts_time = 0
+	*/
 	video_stream := C.avformat_new_stream(output_format_context, encoder)
 	if video_stream == nil {
 		panic("avformat_new_stream")
@@ -117,15 +119,20 @@ func NewH265RTPVideo() *h265RTPVideoWriter {
 		codecCtx:              codecCtx,
 		srcFrame:              srcFrame,
 		enCodecCtx:            encoderCtx,
+		packet_nb:             0,
+		now:                   time.Now().UnixMilli(),
 	}
 }
 
 func (writer *h265RTPVideoWriter) Close() {
 	C.av_write_trailer(writer.output_format_context)
-	fmt.Println("123123123")
 }
 
-func (writer *h265RTPVideoWriter) WriteNalu(nalu []byte) error {
+func (writer *h265RTPVideoWriter) ProcessRtpPacketPayload(packet *rtp.Packet) {
+
+}
+
+func (writer *h265RTPVideoWriter) WriteNalu(nalu []byte, pts float64) error {
 	nalu = append([]uint8{0x00, 0x00, 0x00, 0x01}, []uint8(nalu)...)
 
 	// send NALU to decoder
@@ -133,6 +140,7 @@ func (writer *h265RTPVideoWriter) WriteNalu(nalu []byte) error {
 	avPacket.data = (*C.uint8_t)(C.CBytes(nalu))
 	defer C.free(unsafe.Pointer(avPacket.data))
 	avPacket.size = C.int(len(nalu))
+
 	res := C.avcodec_send_packet(writer.codecCtx, &avPacket)
 	if res < 0 {
 		return nil
@@ -143,19 +151,37 @@ func (writer *h265RTPVideoWriter) WriteNalu(nalu []byte) error {
 	if res < 0 {
 		return nil
 	}
+
+	// ====================ENCODE=====================
 	output_packet := C.av_packet_alloc()
 	res = C.avcodec_send_frame(writer.enCodecCtx, writer.srcFrame)
 	for res >= 0 {
 		res = C.avcodec_receive_packet(writer.enCodecCtx, output_packet)
 		if res < 0 {
-			return nil
+			break
 		}
-		fmt.Println("сча запишет:", output_packet.size)
+		if writer.packet_nb == 0 {
+			output_packet.pts = 0
+			output_packet.dts = 0
+			output_packet.duration = 0
+		} else {
+			frame_duration := writer.enCodecCtx.time_base.den / writer.enCodecCtx.framerate.num
+			frame_time := C.longlong(writer.packet_nb * int(frame_duration))
+			pts := frame_time / C.longlong(writer.enCodecCtx.time_base.num)
 
+			output_packet.pts = pts
+			output_packet.dts = pts
+			output_packet.duration = C.longlong(frame_duration)
+		}
+		C.av_interleaved_write_frame(writer.output_format_context, output_packet)
+		writer.packet_nb += 1
+		if time.Now().UnixMilli()-writer.now > 40*1000 {
+			C.av_write_trailer(writer.output_format_context)
+			os.Exit(1)
+		}
 	}
 	C.av_packet_unref(output_packet)
-	// output_packet->duration = enc_video_avs->time_base.den / enc_video_avs->time_base.num /
-	//                             dec_video_avs->avg_frame_rate.num * dec_video_avs->avg_frame_rate.den
+	//=======================ENCODE=====================
 
 	return nil
 }
